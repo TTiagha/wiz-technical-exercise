@@ -26,9 +26,43 @@ env:
   ECR_REPOSITORY: wiz-exercise-todo-app
 
 jobs:
-  build-and-scan:
-    name: Build and Scan Image
+  # ==========================================================================
+  # SECURITY SCAN JOB (No AWS credentials needed - runs on every push)
+  # ==========================================================================
+  security-scan:
+    name: Security Scan (Trivy)
     runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image locally
+        run: |
+          docker build -t wiz-todo-app:scan app/
+          echo "Built local image for scanning"
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'wiz-todo-app:scan'
+          format: 'table'
+          exit-code: '0'  # Don't fail - we expect vulnerabilities (node:16-alpine)
+          severity: 'CRITICAL,HIGH,MEDIUM'
+
+      - name: Verify wizexercise.txt in image
+        run: |
+          echo "Verifying wizexercise.txt exists in container..."
+          docker run --rm wiz-todo-app:scan cat /app/wizexercise.txt
+          echo "SUCCESS: wizexercise.txt contains candidate name"
+
+  # ==========================================================================
+  # BUILD AND PUSH JOB (Requires AWS credentials)
+  # ==========================================================================
+  build-and-push:
+    name: Build and Push to ECR
+    runs-on: ubuntu-latest
+    needs: security-scan
     outputs:
       image-tag: ${{ steps.build.outputs.image-tag }}
 
@@ -47,7 +81,7 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build Docker image
+      - name: Build and tag Docker image
         id: build
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -58,21 +92,6 @@ jobs:
           echo "image-tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
           echo "full-image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: '${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}'
-          format: 'table'
-          exit-code: '0'  # Don't fail - we expect vulnerabilities
-          severity: 'CRITICAL,HIGH'
-          output: 'trivy-results.txt'
-
-      - name: Upload Trivy scan results
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-results
-          path: trivy-results.txt
-
       - name: Push to ECR
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -81,19 +100,10 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-      - name: Verify wizexercise.txt in image
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          echo "Verifying wizexercise.txt exists in container..."
-          docker run --rm $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG cat /app/wizexercise.txt
-          echo "SUCCESS: wizexercise.txt contains candidate name"
-
   deploy-to-eks:
     name: Deploy to EKS
     runs-on: ubuntu-latest
-    needs: build-and-scan
+    needs: build-and-push
     if: github.ref == 'refs/heads/main'
 
     steps:
