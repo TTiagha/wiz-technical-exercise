@@ -200,7 +200,7 @@ Total: 34 (HIGH: 6, MEDIUM: 28)
 ## Slide 9: AWS Native Detective Controls
 
 **What to Say:**
-> "Once deployed, AWS native tools provide detective capabilities. I enabled CloudTrail, AWS Config, and GuardDuty."
+> "Once deployed, AWS native tools provide detective capabilities. I enabled CloudTrail, AWS Config, and GuardDuty via Terraform."
 
 **Walk Through Each Tool:**
 
@@ -210,14 +210,51 @@ Total: 34 (HIGH: 6, MEDIUM: 28)
 | AWS Config | Detective | Evaluates compliance | Only tells WHAT, not WHY |
 | GuardDuty | Detective | Detects threats | After suspicious activity |
 
+**Deployed Resources (via terraform apply):**
+- CloudTrail: `wiz-exercise-trail` (IsLogging: true)
+- GuardDuty: Detector ID `06983cc3d39d420f883fba1eafb106b4` (Status: ENABLED)
+- AWS Config: 2 managed rules active
+
+**ACTUAL AWS Config Findings (Live Data):**
+
+| Rule | NON_COMPLIANT Count | Our Intentional Finding |
+|------|---------------------|-------------------------|
+| `s3-bucket-public-read-prohibited` | 3 buckets | `wiz-exercise-backups-bfde675c` |
+| `restricted-ssh` | 9 security groups | `wiz-exercise-mongo-sg` (sg-05bdd56f6210d030b) |
+
+**Sample S3 Rule Output:**
+```json
+{
+  "ConfigRuleName": "s3-bucket-public-read-prohibited",
+  "ResourceId": "wiz-exercise-backups-bfde675c",
+  "ComplianceType": "NON_COMPLIANT",
+  "Annotation": "The S3 bucket policy allows public read access."
+}
+```
+
+**Sample SSH Rule Output:**
+```json
+{
+  "ConfigRuleName": "restricted-ssh",
+  "ResourceId": "sg-05bdd56f6210d030b",
+  "ComplianceType": "NON_COMPLIANT"
+}
+```
+
 **Demo (if time):**
 ```bash
+# Show S3 public bucket detection
 aws configservice get-compliance-details-by-config-rule \
   --config-rule-name s3-bucket-public-read-prohibited \
   --compliance-types NON_COMPLIANT
+
+# Show SSH exposure detection
+aws configservice get-compliance-details-by-config-rule \
+  --config-rule-name restricted-ssh \
+  --compliance-types NON_COMPLIANT
 ```
 
-> "See? It found our bucket is NON_COMPLIANT. But it doesn't tell us what's IN the bucket or why it matters."
+> "See? Config found our backup bucket is NON_COMPLIANT and our MongoDB security group allows SSH from 0.0.0.0/0. But it doesn't tell us what's IN the bucket or how these chain together."
 
 **Key Line:**
 > "Each tool provides a piece of the puzzle. But none of them show the attack path."
@@ -376,33 +413,58 @@ aws configservice get-compliance-details-by-config-rule \
 ## Demo Commands Quick Reference
 
 ```bash
+# === PROVE VULNERABILITIES EXIST ===
+
 # 1. Prove S3 is public (no auth!)
 aws s3 ls s3://wiz-exercise-backups-bfde675c/ --no-sign-request
 
-# 2. Show AWS Config detected it
+# 2. Show SSH is exposed (0.0.0.0/0)
+aws ec2 describe-security-groups --group-names wiz-exercise-mongo-sg \
+  --query "SecurityGroups[0].IpPermissions[?FromPort==\`22\`].IpRanges"
+
+# 3. Show cluster-admin binding
+kubectl get clusterrolebinding todo-app-cluster-admin -o yaml
+
+# 4. Prove wizexercise.txt exists in pod
+kubectl exec $(kubectl get pods -n todo-app -l app=todo-app -o jsonpath='{.items[0].metadata.name}') \
+  -n todo-app -- cat /app/wizexercise.txt
+
+
+# === AWS NATIVE SECURITY CONTROLS ===
+
+# 5. CloudTrail - Verify logging enabled
+aws cloudtrail get-trail-status --name wiz-exercise-trail \
+  --query '[IsLogging]'
+
+# 6. GuardDuty - Verify detector enabled
+aws guardduty get-detector --detector-id 06983cc3d39d420f883fba1eafb106b4 \
+  --query '[Status]'
+
+# 7. AWS Config - List active rules
+aws configservice describe-config-rules \
+  --query 'ConfigRules[*].[ConfigRuleName,ConfigRuleState]' --output table
+
+# 8. AWS Config - Show S3 public bucket findings
 aws configservice get-compliance-details-by-config-rule \
   --config-rule-name s3-bucket-public-read-prohibited \
   --compliance-types NON_COMPLIANT
 
-# 3. Show SSH is exposed
-aws ec2 describe-security-groups --group-names wiz-exercise-mongo-sg \
-  --query "SecurityGroups[0].IpPermissions[?FromPort==\`22\`].IpRanges"
+# 9. AWS Config - Show SSH exposure findings
+aws configservice get-compliance-details-by-config-rule \
+  --config-rule-name restricted-ssh \
+  --compliance-types NON_COMPLIANT
 
-# 4. Show cluster-admin binding
-kubectl get clusterrolebinding todo-app-cluster-admin -o yaml
 
-# 5. Prove wizexercise.txt exists
-kubectl exec $(kubectl get pods -n todo-app -l app=todo-app -o jsonpath='{.items[0].metadata.name}') \
-  -n todo-app -- cat /app/wizexercise.txt
+# === CI/CD SECURITY SCANNING ===
 
-# 6. Run tfsec locally (IaC scanning)
+# 10. Run tfsec locally (IaC scanning - 53 findings)
 tfsec terraform/ --no-color
 
-# 7. Run Trivy locally (container scanning)
+# 11. Run Trivy locally (container scanning - 39 findings)
 docker build -t wiz-todo-app:scan app/
 trivy image --severity CRITICAL,HIGH,MEDIUM wiz-todo-app:scan
 
-# 8. Show GitHub Actions pipeline runs
+# 12. Show GitHub Actions pipeline runs
 # Visit: https://github.com/TTiagha/wiz-technical-exercise/actions
 ```
 
