@@ -4,7 +4,7 @@
 # This builds a container image for the todo application.
 # The wizexercise.txt file is REQUIRED by the exercise to prove you built this.
 #
-# Last updated: 2026-01-23 - Trigger Trivy scan for vulnerability detection
+# Last updated: 2026-01-23 - Trigger Trivy scan (fixed workflow)
 # =============================================================================
 
 FROM node:16-alpine
