@@ -2,7 +2,7 @@
 
 **Candidate:** Tem Muya Tiagha
 **Duration:** 45 minutes (including demo)
-**Slides:** 12 total
+**Slides:** 13 total
 
 ---
 
@@ -50,7 +50,7 @@ Every finding should have two parts:
 
 | Finding | What's Wrong | Isolated | Chained |
 |---------|--------------|----------|---------|
-| SSH Exposed | 0.0.0.0/0 on port 22 | MEDIUM | CRITICAL |
+| SSH Exposed | 0.0.0.0/0 on port 22 | HIGH | CRITICAL |
 | Public S3 | Backups readable by anyone | CRITICAL | CATASTROPHIC |
 | Overpermissive IAM | ec2:*, s3:* permissions | HIGH | CRITICAL |
 | cluster-admin | App has full K8s access | HIGH | CRITICAL |
@@ -64,8 +64,8 @@ Every finding should have two parts:
 
 ## Slide 4: Deep-Dive - SSH Exposure + Chain
 
-**What to Say (Isolated - MEDIUM):**
-> "SSH on port 22 exposed to 0.0.0.0/0 means anyone on the internet can attempt to connect. This enables brute-force attacks. By itself, with strong SSH keys and an up-to-date OS, this might be manageable."
+**What to Say (Isolated - HIGH):**
+> "SSH on port 22 exposed to 0.0.0.0/0 means anyone on the internet can attempt to connect. This enables brute-force attacks, credential stuffing, and scanning by botnets. Even with strong SSH keys, this is HIGH severity because it expands the attack surface significantly."
 
 **What to Say (Chained - CRITICAL):**
 > "But here's where it gets interesting. This VM runs Ubuntu 20.04 with known kernel CVEs. An attacker who gains SSH access could exploit these to get root. And because the VM has an IAM role with ec2:* and s3:*, that root access translates to full AWS account access."
@@ -86,7 +86,7 @@ Internet → SSH → Ubuntu Exploit → Root → IAM Role → AWS Account Takeov
 > "This is CRITICAL even in isolation. The backup bucket is publicly readable. Anyone on the internet can list and download our MongoDB backups. No exploitation required - just a web browser or curl command."
 
 **What to Say (Chained - CATASTROPHIC):**
-> "The backups contain MongoDB credentials and all application data. An attacker who downloads the backup can extract credentials and directly access the live database. This is why context matters - a public bucket with marketing images is LOW risk. A public bucket with database backups is CRITICAL."
+> "The backups contain MongoDB data dumps which may include connection strings, application secrets, or sensitive user data. An attacker who downloads the backup can analyze it for credentials and potentially access the live database. This is why context matters - a public bucket with marketing images is LOW risk. A public bucket with database backups is CRITICAL."
 
 **Demo Command (if asked):**
 ```bash
@@ -180,7 +180,7 @@ Result #17 HIGH - IAM policy document uses wildcards
 | Severity | Count | Examples |
 |----------|-------|----------|
 | CRITICAL | 0 | - |
-| HIGH | 10 | OpenSSL CVE-2023-5363, node-tar CVE-2026-23745 |
+| HIGH | 10 | OpenSSL vulnerabilities, musl libc issues, node-tar path traversal |
 | MEDIUM | 29 | busybox use-after-free, semver ReDoS |
 
 **Sample Trivy Output:**
@@ -188,8 +188,8 @@ Result #17 HIGH - IAM policy document uses wildcards
 node:16-alpine (alpine 3.18.3)
 Total: 34 (HIGH: 6, MEDIUM: 28)
 
-│ libcrypto3 │ CVE-2023-5363 │ HIGH │ openssl: Incorrect cipher key processing │
-│ musl       │ CVE-2025-26519│ HIGH │ musl libc vulnerability                  │
+│ libcrypto3 │ HIGH │ openssl: Incorrect cipher key processing │
+│ musl       │ HIGH │ musl libc use-after-free vulnerability   │
 ```
 
 **Key Line:**
@@ -278,7 +278,7 @@ aws configservice get-compliance-details-by-config-rule \
 
 ---
 
-## Slide 9: The Gap - What Native Tools Miss
+## Slide 10: The Gap - What Native Tools Miss
 
 **What to Say:**
 > "Here's the gap. Let me show you side by side."
@@ -287,7 +287,7 @@ aws configservice get-compliance-details-by-config-rule \
 
 | AWS Config Says | What We Need to Know |
 |-----------------|----------------------|
-| "S3 bucket is public" | "S3 bucket contains database backups with MongoDB credentials that would give access to production data including customer PII" |
+| "S3 bucket is public" | "S3 bucket contains database backups that may include connection strings, secrets, or customer PII - providing a path to production data access" |
 | Result: NON_COMPLIANT | Severity: CRITICAL |
 | Severity: HIGH | Business Impact: Data breach |
 
@@ -296,7 +296,7 @@ aws configservice get-compliance-details-by-config-rule \
 
 ---
 
-## Slide 10: Wiz Value Proposition
+## Slide 11: Wiz Value Proposition
 
 **What to Say:**
 > "This is exactly what Wiz does better than native tools."
@@ -322,7 +322,7 @@ aws configservice get-compliance-details-by-config-rule \
 
 ---
 
-## Slide 11: Remediation Recommendations
+## Slide 12: Remediation Recommendations
 
 **What to Say:**
 > "If I were advising this customer, I'd prioritize based on attack paths, not individual severities."
@@ -351,7 +351,7 @@ aws configservice get-compliance-details-by-config-rule \
 
 ---
 
-## Slide 12: Summary & Demo Offer
+## Slide 13: Summary & Demo Offer
 
 **Key Takeaways:**
 > "Let me leave you with four key points:"
@@ -420,6 +420,9 @@ aws configservice get-compliance-details-by-config-rule \
 **Q: "What's the difference between preventative and detective controls?"**
 > "Preventative stops bad things - like an SCP blocking public S3 creation. Detective alerts after - like Config flagging an existing public bucket. A mature posture needs both."
 
+**Q: "What preventative controls did you implement?"**
+> "My preventative controls are CI/CD gates - tfsec and Trivy scan before deployment. In production, I'd also enable S3 Block Public Access or SCPs, but those would eliminate the intentional vulnerabilities needed for this exercise."
+
 ### Handling Unknowns
 
 **Q: [Something you don't know]**
@@ -430,21 +433,24 @@ aws configservice get-compliance-details-by-config-rule \
 ## Demo Commands Quick Reference
 
 ```bash
+# === PROVE APP WORKS ===
+
+# 1. Prove wizexercise.txt exists in pod (confirms app is running)
+kubectl exec $(kubectl get pods -n todo-app -l app=todo-app -o jsonpath='{.items[0].metadata.name}') \
+  -n todo-app -- cat /app/wizexercise.txt
+
+
 # === PROVE VULNERABILITIES EXIST ===
 
-# 1. Prove S3 is public (no auth!)
+# 2. Prove S3 is public (no auth!)
 aws s3 ls s3://wiz-exercise-backups-bfde675c/ --no-sign-request
 
-# 2. Show SSH is exposed (0.0.0.0/0)
+# 3. Show SSH is exposed (0.0.0.0/0)
 aws ec2 describe-security-groups --group-names wiz-exercise-mongo-sg \
   --query "SecurityGroups[0].IpPermissions[?FromPort==\`22\`].IpRanges"
 
-# 3. Show cluster-admin binding
+# 4. Show cluster-admin binding
 kubectl get clusterrolebinding todo-app-cluster-admin -o yaml
-
-# 4. Prove wizexercise.txt exists in pod
-kubectl exec $(kubectl get pods -n todo-app -l app=todo-app -o jsonpath='{.items[0].metadata.name}') \
-  -n todo-app -- cat /app/wizexercise.txt
 
 
 # === CI/CD PREVENTATIVE CONTROLS ===
