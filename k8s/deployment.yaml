@@ -1,0 +1,76 @@
+# =============================================================================
+# DEPLOYMENT - Todo App Pod Configuration
+# =============================================================================
+# This creates 2 replicas of the todo app container.
+# Each pod uses the overpermissive service account (INTENTIONAL WEAKNESS).
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: todo-app
+  namespace: todo-app
+  labels:
+    app: todo-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: todo-app
+  template:
+    metadata:
+      labels:
+        app: todo-app
+    spec:
+      # INTENTIONAL WEAKNESS: Using overpermissive service account
+      serviceAccountName: todo-app-sa
+
+      containers:
+        - name: todo-app
+          # Image will be set during CI/CD deployment
+          # Example: 504784824189.dkr.ecr.us-east-1.amazonaws.com/wiz-exercise-todo-app:latest
+          image: ECR_REPOSITORY_URL:latest
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 3000
+              name: http
+
+          # MongoDB connection from secret
+          env:
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: mongo-credentials
+                  key: uri
+            - name: NODE_ENV
+              value: "production"
+
+          # Resource limits (good practice)
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+
+          # Health checks
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+          # Security context (some hardening)
+          securityContext:
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            runAsUser: 1001

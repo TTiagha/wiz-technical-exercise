@@ -1,0 +1,22 @@
+# =============================================================================
+# SERVICE - Internal Load Balancing
+# =============================================================================
+# This creates a ClusterIP service that load balances traffic to the pods.
+# The Ingress will route external traffic to this service.
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: todo-app-service
+  namespace: todo-app
+  labels:
+    app: todo-app
+spec:
+  type: ClusterIP
+  selector:
+    app: todo-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3000
+      protocol: TCP

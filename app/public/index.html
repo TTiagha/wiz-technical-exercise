@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wiz Todo App</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 28px;
+        }
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 25px;
+        }
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 25px;
+        }
+        input[type="text"] {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.2s;
+        }
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        button {
+            padding: 12px 24px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:hover {
+            background: #5a6fd6;
+        }
+        .todo-list {
+            list-style: none;
+        }
+        .todo-item {
+            display: flex;
+            align-items: center;
+            padding: 15px;
+            border-bottom: 1px solid #f0f0f0;
+            transition: background 0.2s;
+        }
+        .todo-item:hover {
+            background: #f9f9f9;
+        }
+        .todo-item input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            margin-right: 15px;
+            cursor: pointer;
+        }
+        .todo-text {
+            flex: 1;
+            font-size: 16px;
+        }
+        .todo-text.completed {
+            text-decoration: line-through;
+            color: #999;
+        }
+        .delete-btn {
+            background: #ff6b6b;
+            padding: 8px 12px;
+            font-size: 12px;
+        }
+        .delete-btn:hover {
+            background: #ee5a5a;
+        }
+        .empty {
+            text-align: center;
+            color: #999;
+            padding: 40px;
+        }
+        .footer {
+            margin-top: 20px;
+            text-align: center;
+            color: #999;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Wiz Todo App</h1>
+        <p class="subtitle">Technical Exercise - Tem Muya Tiagha</p>
+
+        <div class="input-group">
+            <input type="text" id="todoInput" placeholder="Add a new todo..." onkeypress="handleKeyPress(event)">
+            <button onclick="addTodo()">Add</button>
+        </div>
+
+        <ul class="todo-list" id="todoList">
+            <li class="empty">Loading todos...</li>
+        </ul>
+
+        <div class="footer">
+            Connected to MongoDB via Kubernetes
+        </div>
+    </div>
+
+    <script>
+        const API_URL = '/api/todos';
+
+        // Fetch all todos on page load
+        async function fetchTodos() {
+            try {
+                const response = await fetch(API_URL);
+                const todos = await response.json();
+                renderTodos(todos);
+            } catch (error) {
+                console.error('Error fetching todos:', error);
+                document.getElementById('todoList').innerHTML =
+                    '<li class="empty">Error loading todos. Check console.</li>';
+            }
+        }
+
+        // Render todos to the page
+        function renderTodos(todos) {
+            const list = document.getElementById('todoList');
+            if (todos.length === 0) {
+                list.innerHTML = '<li class="empty">No todos yet. Add one above!</li>';
+                return;
+            }
+
+            list.innerHTML = todos.map(todo => `
+                <li class="todo-item">
+                    <input type="checkbox"
+                           ${todo.completed ? 'checked' : ''}
+                           onchange="toggleTodo('${todo._id}', this.checked)">
+                    <span class="todo-text ${todo.completed ? 'completed' : ''}">${escapeHtml(todo.text)}</span>
+                    <button class="delete-btn" onclick="deleteTodo('${todo._id}')">Delete</button>
+                </li>
+            `).join('');
+        }
+
+        // Add new todo
+        async function addTodo() {
+            const input = document.getElementById('todoInput');
+            const text = input.value.trim();
+            if (!text) return;
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text })
+                });
+
+                if (response.ok) {
+                    input.value = '';
+                    fetchTodos();
+                }
+            } catch (error) {
+                console.error('Error adding todo:', error);
+            }
+        }
+
+        // Toggle todo completion
+        async function toggleTodo(id, completed) {
+            try {
+                await fetch(`${API_URL}/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ completed })
+                });
+                fetchTodos();
+            } catch (error) {
+                console.error('Error updating todo:', error);
+            }
+        }
+
+        // Delete todo
+        async function deleteTodo(id) {
+            try {
+                await fetch(`${API_URL}/${id}`, { method: 'DELETE' });
+                fetchTodos();
+            } catch (error) {
+                console.error('Error deleting todo:', error);
+            }
+        }
+
+        // Handle Enter key
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') addTodo();
+        }
+
+        // Escape HTML to prevent XSS
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Initial load
+        fetchTodos();
+    </script>
+</body>
+</html>

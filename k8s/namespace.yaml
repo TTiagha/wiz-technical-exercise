@@ -1,0 +1,10 @@
+# =============================================================================
+# NAMESPACE - Logical isolation for the todo app
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: todo-app
+  labels:
+    app: todo-app
+    project: wiz-exercise

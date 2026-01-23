@@ -1,0 +1,52 @@
+# =============================================================================
+# RBAC - Role-Based Access Control (INTENTIONALLY OVERPERMISSIVE)
+# =============================================================================
+# This configuration grants cluster-admin to the application service account.
+#
+# WHY THIS IS DANGEROUS (INTENTIONAL WEAKNESS):
+# - Application can read ALL secrets in the cluster (including other apps' credentials)
+# - Application can modify/delete any resource
+# - If the application has ANY vulnerability, attacker gets full cluster access
+#
+# ISOLATED RISK: HIGH
+# - Violates least-privilege principle
+# - If application has no vulnerabilities, this is latent risk
+#
+# CHAINED RISK: CRITICAL
+# - Combined with ANY app vulnerability (SSRF, RCE, etc.) = immediate cluster takeover
+# - Attacker can pivot to database via secrets
+# - Full chain: App vuln -> Pod compromise -> cluster-admin -> Read all secrets
+#
+# CORRECT PRACTICE:
+# - Create a ServiceAccount with ONLY the permissions the app needs
+# - Typically: none (apps shouldn't need K8s API access)
+# - At most: read ConfigMaps in same namespace
+# =============================================================================
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: todo-app-sa
+  namespace: todo-app
+  labels:
+    app: todo-app
+    warning: "INTENTIONALLY-OVERPERMISSIVE"
+
+---
+
+# INTENTIONAL WEAKNESS: Binding cluster-admin to the app service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: todo-app-cluster-admin
+  labels:
+    app: todo-app
+    warning: "INTENTIONALLY-OVERPERMISSIVE"
+subjects:
+  - kind: ServiceAccount
+    name: todo-app-sa
+    namespace: todo-app
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin  # CRITICAL WEAKNESS: Full cluster access!
+  apiGroup: rbac.authorization.k8s.io

@@ -1,0 +1,162 @@
+# =============================================================================
+# APPLICATION BUILD AND DEPLOY PIPELINE
+# =============================================================================
+# This workflow:
+# 1. Builds the Docker container image
+# 2. Scans for vulnerabilities (will find issues - intentional)
+# 3. Pushes to Amazon ECR
+# 4. Deploys to EKS cluster
+#
+# TRIGGER: Push to main branch affecting app/** or k8s/** files
+# =============================================================================
+
+name: Build and Deploy App
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'k8s/**'
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  AWS_REGION: us-east-1
+  EKS_CLUSTER_NAME: wiz-exercise
+  ECR_REPOSITORY: wiz-exercise-todo-app
+
+jobs:
+  build-and-scan:
+    name: Build and Scan Image
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.build.outputs.image-tag }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build Docker image
+        id: build
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG app/
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "image-tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "full-image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}'
+          format: 'table'
+          exit-code: '0'  # Don't fail - we expect vulnerabilities
+          severity: 'CRITICAL,HIGH'
+          output: 'trivy-results.txt'
+
+      - name: Upload Trivy scan results
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-results
+          path: trivy-results.txt
+
+      - name: Push to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+      - name: Verify wizexercise.txt in image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          echo "Verifying wizexercise.txt exists in container..."
+          docker run --rm $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG cat /app/wizexercise.txt
+          echo "SUCCESS: wizexercise.txt contains candidate name"
+
+  deploy-to-eks:
+    name: Deploy to EKS
+    runs-on: ubuntu-latest
+    needs: build-and-scan
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name $EKS_CLUSTER_NAME --region $AWS_REGION
+
+      - name: Apply Kubernetes manifests
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          # Apply namespace first
+          kubectl apply -f k8s/namespace.yaml
+
+          # Apply RBAC (overpermissive - intentional weakness)
+          kubectl apply -f k8s/rbac.yaml
+
+          # Update secret with actual MongoDB connection
+          # Note: In real deployment, get MongoDB IP from Terraform output
+          kubectl apply -f k8s/secret.yaml
+
+          # Update deployment with correct image
+          sed -i "s|ECR_REPOSITORY_URL:latest|$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG|g" k8s/deployment.yaml
+          kubectl apply -f k8s/deployment.yaml
+
+          # Apply service and ingress
+          kubectl apply -f k8s/service.yaml
+          kubectl apply -f k8s/ingress.yaml
+
+      - name: Wait for deployment
+        run: |
+          kubectl rollout status deployment/todo-app -n todo-app --timeout=300s
+
+      - name: Get deployment status
+        run: |
+          echo "### Deployment Status :white_check_mark:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          kubectl get pods -n todo-app >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          kubectl get svc -n todo-app >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          kubectl get ingress -n todo-app >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Verify wizexercise.txt in running pod
+        run: |
+          POD=$(kubectl get pods -n todo-app -l app=todo-app -o jsonpath='{.items[0].metadata.name}')
+          echo "Checking wizexercise.txt in pod $POD..."
+          kubectl exec -n todo-app $POD -- cat /app/wizexercise.txt
+          echo "SUCCESS: Candidate file verified in running pod"
