@@ -3,6 +3,8 @@
 # =============================================================================
 # This creates intentionally vulnerable infrastructure for security training
 # DO NOT use this configuration in production environments
+#
+# Last updated: 2026-01-22 - Trigger pipeline for tfsec scan verification
 # =============================================================================
 
 terraform {
