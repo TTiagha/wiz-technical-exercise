@@ -197,23 +197,25 @@ Total: 34 (HIGH: 6, MEDIUM: 28)
 
 ---
 
-## Slide 9: AWS Native Security Controls (Preventative + Detective)
+## Slide 9: Security Controls (Preventative + Detective)
 
 **What to Say:**
-> "I implemented both preventative AND detective controls. AWS WAF blocks attacks before they reach the app. AWS Config detects misconfigurations after deployment. CloudTrail and GuardDuty provide audit logging and threat detection."
+> "My preventative controls are implemented in the CI/CD pipeline. tfsec scans Terraform and Trivy scans container images before deployment. In production, these would block on critical findings. For this exercise, I allowed deployment so we could observe how AWS Config and Wiz detect and contextualize the issues post-deployment."
 
-**Walk Through Each Tool:**
+**Security Controls by Phase:**
 
-| Tool | Type | What It Does | Limitation |
-|------|------|--------------|------------|
-| **AWS WAF** | **Preventative** | Blocks malicious requests (SQLi, XSS) | Only protects web layer |
-| CloudTrail | Audit | Logs all API calls | Reactive - after the fact |
-| AWS Config | Detective | Evaluates compliance | Only tells WHAT, not WHY |
-| GuardDuty | Detective | Detects threats | After suspicious activity |
+| Phase | Tool | Type | What It Does |
+|-------|------|------|--------------|
+| **Pre-Deploy** | tfsec | Preventative | Scans IaC, blocks bad Terraform |
+| **Pre-Deploy** | Trivy | Preventative | Scans containers, blocks vulnerable images |
+| **Post-Deploy** | AWS Config | Detective | Evaluates compliance, finds misconfigs |
+| **Post-Deploy** | CloudTrail | Audit | Logs all API calls for forensics |
+| **Post-Deploy** | GuardDuty | Detective | Detects active threats |
 
-**Deployed Resources (via terraform apply):**
-- **AWS WAF**: `wiz-exercise-waf` (Web ACL ID: `e29ab682-8513-4c1a-9daa-ad145bc42190`)
-  - 3 AWS Managed Rule Groups: CommonRuleSet, SQLiRuleSet, KnownBadInputsRuleSet
+**Why This Approach:**
+> "A preventative control like S3 Block Public Access would fix the public bucket - but then there's nothing to detect. I intentionally let the vulnerabilities through so we can see the full detection story: tfsec flagged it pre-deploy (53 findings), AWS Config flagged it post-deploy (NON_COMPLIANT), and Wiz would show the attack path context."
+
+**Deployed Detective Controls (via terraform apply):**
 - CloudTrail: `wiz-exercise-trail` (IsLogging: true)
 - GuardDuty: Detector ID `06983cc3d39d420f883fba1eafb106b4` (Status: ENABLED)
 - AWS Config: 2 managed rules active
@@ -222,12 +224,13 @@ Total: 34 (HIGH: 6, MEDIUM: 28)
 
 | Tool | Output Type | Demo Value |
 |------|-------------|------------|
-| **AWS WAF** | Blocks attacks (preventative) | **Show rules configured - actively protecting ALB** |
+| **tfsec** | IaC findings (pre-deploy) | **53 findings including public S3, open SSH** |
+| **Trivy** | Container CVEs (pre-deploy) | **39 findings including OpenSSL, node-tar** |
 | CloudTrail | Audit logs (reactive) | Just "Enabled" - useful for forensics AFTER incident |
 | GuardDuty | Threat alerts (if attacked) | Just "Enabled" - no findings yet (nothing malicious happening) |
-| **AWS Config** | Compliance findings (proactive) | **NON_COMPLIANT results we can show live** |
+| **AWS Config** | Compliance findings (post-deploy) | **NON_COMPLIANT results we can show live** |
 
-> "WAF is my preventative control - it actively blocks SQL injection, XSS, and known bad inputs before they reach the app. AWS Config is my detective control - it found our public S3 bucket and open SSH. CloudTrail and GuardDuty are enabled for audit trail and threat detection."
+> "tfsec and Trivy are my preventative layer - they caught 92 issues before deployment. AWS Config is my detective layer - it found the same issues after deployment. The difference is Wiz shows WHY these findings matter by connecting them into attack paths."
 
 **ACTUAL AWS Config Findings (Live Data):**
 
@@ -444,47 +447,42 @@ kubectl exec $(kubectl get pods -n todo-app -l app=todo-app -o jsonpath='{.items
   -n todo-app -- cat /app/wizexercise.txt
 
 
-# === AWS NATIVE SECURITY CONTROLS ===
+# === CI/CD PREVENTATIVE CONTROLS ===
 
-# 5. AWS WAF - Show preventative control (blocks SQLi, XSS, bad inputs)
-aws wafv2 get-web-acl --name wiz-exercise-waf --scope REGIONAL \
-  --id e29ab682-8513-4c1a-9daa-ad145bc42190 \
-  --query 'WebACL.Rules[*].Name' --output table
+# 5. Run tfsec locally (IaC scanning - 53 findings)
+tfsec terraform/ --no-color
 
-# 6. CloudTrail - Verify logging enabled
-aws cloudtrail get-trail-status --name wiz-exercise-trail \
-  --query '[IsLogging]'
+# 6. Run Trivy locally (container scanning - 39 findings)
+docker build -t wiz-todo-app:scan app/
+trivy image --severity CRITICAL,HIGH,MEDIUM wiz-todo-app:scan
 
-# 7. GuardDuty - Verify detector enabled
-aws guardduty get-detector --detector-id 06983cc3d39d420f883fba1eafb106b4 \
-  --query '[Status]'
+# 7. Show GitHub Actions pipeline runs
+# Visit: https://github.com/TTiagha/wiz-technical-exercise/actions
+
+
+# === AWS DETECTIVE CONTROLS ===
 
 # 8. AWS Config - List active rules
 aws configservice describe-config-rules \
   --query 'ConfigRules[*].[ConfigRuleName,ConfigRuleState]' --output table
 
-# 9. AWS Config - Show S3 public bucket findings (DETECTIVE)
+# 9. AWS Config - Show S3 public bucket findings
 aws configservice get-compliance-details-by-config-rule \
   --config-rule-name s3-bucket-public-read-prohibited \
   --compliance-types NON_COMPLIANT
 
-# 10. AWS Config - Show SSH exposure findings (DETECTIVE)
+# 10. AWS Config - Show SSH exposure findings
 aws configservice get-compliance-details-by-config-rule \
   --config-rule-name restricted-ssh \
   --compliance-types NON_COMPLIANT
 
+# 11. CloudTrail - Verify logging enabled
+aws cloudtrail get-trail-status --name wiz-exercise-trail \
+  --query '[IsLogging]'
 
-# === CI/CD SECURITY SCANNING ===
-
-# 11. Run tfsec locally (IaC scanning - 53 findings)
-tfsec terraform/ --no-color
-
-# 12. Run Trivy locally (container scanning - 39 findings)
-docker build -t wiz-todo-app:scan app/
-trivy image --severity CRITICAL,HIGH,MEDIUM wiz-todo-app:scan
-
-# 13. Show GitHub Actions pipeline runs
-# Visit: https://github.com/TTiagha/wiz-technical-exercise/actions
+# 12. GuardDuty - Verify detector enabled
+aws guardduty get-detector --detector-id 06983cc3d39d420f883fba1eafb106b4 \
+  --query '[Status]'
 ```
 
 ---
