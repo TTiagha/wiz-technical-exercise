@@ -215,6 +215,16 @@ Total: 34 (HIGH: 6, MEDIUM: 28)
 - GuardDuty: Detector ID `06983cc3d39d420f883fba1eafb106b4` (Status: ENABLED)
 - AWS Config: 2 managed rules active
 
+**What Each Tool Actually Provides (Important for Demo):**
+
+| Tool | Output Type | Demo Value |
+|------|-------------|------------|
+| CloudTrail | Audit logs (reactive) | Just "Enabled" - useful for forensics AFTER incident |
+| GuardDuty | Threat alerts (if attacked) | Just "Enabled" - no findings yet (nothing malicious happening) |
+| **AWS Config** | Compliance findings (proactive) | **NON_COMPLIANT results we can show live** |
+
+> "CloudTrail and GuardDuty are enabled for completeness, but AWS Config is the one that actually produces findings I can demo. Config evaluates our resources against rules and flags violations in real-time."
+
 **ACTUAL AWS Config Findings (Live Data):**
 
 | Rule | NON_COMPLIANT Count | Our Intentional Finding |
