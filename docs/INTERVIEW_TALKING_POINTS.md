@@ -141,10 +141,66 @@ Internet → S3 → Download Backup → Extract Credentials → Direct Database 
 
 ---
 
-## Slide 8: AWS Native Security Controls
+## Slide 8: Three-Layer Security Controls
 
 **What to Say:**
-> "Before we look at how Wiz adds value, let me show what AWS native tools can detect. I deployed CloudTrail, AWS Config, and GuardDuty."
+> "Let me show you the three layers of security controls I implemented, and importantly - the order they run in a mature DevSecOps pipeline."
+
+**The Three Layers:**
+
+| Layer | Tools | When It Runs | What It Catches |
+|-------|-------|--------------|-----------------|
+| **Preventive** | tfsec + Trivy in CI/CD | Before deployment | IaC misconfigs + container vulns |
+| **Audit** | CloudTrail | During runtime | All API activity |
+| **Detective** | AWS Config + GuardDuty | After deployment | Compliance violations + threats |
+
+**The Story (Important Context):**
+> "I deployed the infrastructure via Terraform, then pushed the code to GitHub. The GitHub Actions pipeline runs tfsec on Terraform files and Trivy on container images. If I had this pipeline from day one, these vulnerabilities would have been flagged BEFORE reaching AWS."
+
+**tfsec Results (IaC Scanner) - 53 Findings:**
+
+| Severity | Count | Examples |
+|----------|-------|----------|
+| CRITICAL | 9 | SSH 0.0.0.0/0, Public S3, EKS public access |
+| HIGH | 31 | Wildcard IAM (ec2:*, s3:*), missing encryption |
+| MEDIUM | 8 | Missing logging configurations |
+| LOW | 5 | Missing public access blocks |
+
+**Sample tfsec Output:**
+```
+Result #6 CRITICAL - Security group allows ingress from public internet
+  security_groups.tf:22  cidr_blocks = ["0.0.0.0/0"]
+
+Result #17 HIGH - IAM policy document uses wildcards
+  iam.tf:45  Action = ["ec2:*", "s3:*"]
+```
+
+**Trivy Results (Container Scanner) - 39 Findings:**
+
+| Severity | Count | Examples |
+|----------|-------|----------|
+| CRITICAL | 0 | - |
+| HIGH | 10 | OpenSSL CVE-2023-5363, node-tar CVE-2026-23745 |
+| MEDIUM | 29 | busybox use-after-free, semver ReDoS |
+
+**Sample Trivy Output:**
+```
+node:16-alpine (alpine 3.18.3)
+Total: 34 (HIGH: 6, MEDIUM: 28)
+
+│ libcrypto3 │ CVE-2023-5363 │ HIGH │ openssl: Incorrect cipher key processing │
+│ musl       │ CVE-2025-26519│ HIGH │ musl libc vulnerability                  │
+```
+
+**Key Line:**
+> "Between tfsec and Trivy, the pipeline found 92 issues - including all 6 of our intentional IaC vulnerabilities AND outdated base image packages. This is the 'shift-left' value: catch issues before they reach production."
+
+---
+
+## Slide 9: AWS Native Detective Controls
+
+**What to Say:**
+> "Once deployed, AWS native tools provide detective capabilities. I enabled CloudTrail, AWS Config, and GuardDuty."
 
 **Walk Through Each Tool:**
 
@@ -338,6 +394,16 @@ kubectl get clusterrolebinding todo-app-cluster-admin -o yaml
 # 5. Prove wizexercise.txt exists
 kubectl exec $(kubectl get pods -n todo-app -l app=todo-app -o jsonpath='{.items[0].metadata.name}') \
   -n todo-app -- cat /app/wizexercise.txt
+
+# 6. Run tfsec locally (IaC scanning)
+tfsec terraform/ --no-color
+
+# 7. Run Trivy locally (container scanning)
+docker build -t wiz-todo-app:scan app/
+trivy image --severity CRITICAL,HIGH,MEDIUM wiz-todo-app:scan
+
+# 8. Show GitHub Actions pipeline runs
+# Visit: https://github.com/TTiagha/wiz-technical-exercise/actions
 ```
 
 ---
